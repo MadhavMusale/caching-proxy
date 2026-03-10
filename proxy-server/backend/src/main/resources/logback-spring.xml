@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- ── Dev profile: human-readable ── -->
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%cyan(%thread)] [reqId=%X{requestId:-—}] [ip=%X{clientIp:-—}] %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+        <logger name="com.proxy" level="DEBUG"/>
+    </springProfile>
+
+    <!-- ── Production profile: JSON structured logs (Datadog/Logtail/CloudWatch friendly) ── -->
+    <springProfile name="prod">
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <includeContext>false</includeContext>
+                <includeMdcKeyName>requestId</includeMdcKeyName>
+                <includeMdcKeyName>clientIp</includeMdcKeyName>
+                <includeMdcKeyName>keyId</includeMdcKeyName>
+                <includeMdcKeyName>keyName</includeMdcKeyName>
+                <customFields>{"app":"caching-proxy","version":"1.0.0"}</customFields>
+            </encoder>
+        </appender>
+
+        <!-- Rolling file: 30-day retention, 100MB per file -->
+        <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>/var/log/proxy/app.json</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>/var/log/proxy/app.%d{yyyy-MM-dd}.json.gz</fileNamePattern>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"app":"caching-proxy","version":"1.0.0"}</customFields>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+            <appender-ref ref="JSON_FILE"/>
+        </root>
+        <logger name="com.proxy" level="INFO"/>
+        <logger name="org.springframework" level="WARN"/>
+        <logger name="io.lettuce" level="WARN"/>
+    </springProfile>
+
+</configuration>

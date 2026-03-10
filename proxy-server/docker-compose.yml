@@ -1,0 +1,117 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL — API Key Storage ───────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: proxy-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-proxydb}
+      POSTGRES_USER: ${DB_USER:-proxy}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-proxy} -d ${DB_NAME:-proxydb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ── Redis — Response Cache ─────────────────────────────────
+  redis:
+    image: redis:7.2.4-alpine
+    container_name: proxy-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-redispass}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispass}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+
+  # ── Spring Boot Backend ────────────────────────────────────
+  backend:
+    build: ./backend
+    container_name: proxy-backend
+    env_file: .env
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - logs:/var/log/proxy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/cache/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+
+  # ── React Frontend ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=${VITE_API_URL:-https://YOUR_DOMAIN}
+    container_name: proxy-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # ── Nginx — SSL Termination + Reverse Proxy ────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: proxy-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+volumes:
+  postgres_data:
+  redis_data:
+  logs:
