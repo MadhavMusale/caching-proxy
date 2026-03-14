@@ -1,152 +1,125 @@
-# ⚡ CacheProxy — Smart HTTP Caching Gateway
+# HTTP Caching Proxy Server
 
-A production-grade full-stack caching proxy server built with **Java 17 + Spring Boot 3.2** backend and a **React + Vite** dashboard frontend.
+A proxy server that forwards HTTP requests to any external API and caches the responses. Repeated requests are served instantly from cache instead of hitting the origin API again every time.
 
----
-
-## 🏗️ Architecture
-
-```
-Browser/App
-    │
-    ▼
-React Dashboard (Port 3000)
-    │
-    ▼
-Spring Boot Proxy (Port 8080)
-    ├── GET /proxy/**        → Proxy + Cache layer → Origin Server
-    ├── GET /cache/stats     → Live cache metrics
-    ├── GET /cache/health    → Health check
-    ├── POST /cache/clear    → Flush all cache
-    └── PUT /cache/origin    → Update origin URL
-    │
-    ▼
-Caffeine In-Memory Cache
-    ├── Capacity: 10,000 entries
-    ├── TTL: 1 hour
-    └── Strategy: LRU eviction
-```
+Built with Java 17, Spring Boot, Redis, PostgreSQL, React, Docker, and GitHub Actions.
 
 ---
 
-## 🚀 Quick Start
+## How it works
 
-### Option 1 — Docker (Recommended)
+When a request comes in, the proxy checks Redis for a cached response. On a cache hit it returns immediately under 5ms. On a miss it forwards the request to the origin, stores the response in Redis with a configurable TTL, and returns it to the client. A React dashboard gives visibility into hit rates, TTL status, and per-endpoint traffic in real time.
+
+Cache hits: under 5ms
+Cache misses: 200-500ms (origin dependent)
+Improvement: roughly 100x on repeated requests
+
+---
+
+## Running locally
+
+### Option 1 - Docker Compose (recommended)
+
+Starts the backend, frontend, Redis, PostgreSQL, and Nginx together.
 
 ```bash
-# Linux / macOS
-chmod +x run.sh && ./run.sh
-
-# Windows
-run.bat
+git clone https://github.com/MadhavMusale/caching-proxy
+cd caching-proxy
+cp .env.example .env
+# fill in your values in .env
+docker compose up
 ```
 
-### Option 2 — Manual
+Frontend runs at http://localhost:3000
+Backend runs at http://localhost:8080
 
-**Backend:**
-```bash
-cd backend
-mvn spring-boot:run
-# Runs on http://localhost:8080
-```
+### Option 2 - Manual
 
-**Frontend:**
+**Backend**
+
+Open the project in IntelliJ and run the Spring Boot application. It uses `application-local.properties` by default which runs H2 in-memory instead of PostgreSQL and skips Redis.
+
+**Frontend**
+
 ```bash
 cd frontend
 npm install
 npm run dev
-# Runs on http://localhost:3000
 ```
 
 ---
 
-## 🌐 Usage
+## Configuration
 
-### Proxy a Request
+Three config files control the application:
+
+`src/main/resources/application.properties` - main config covering port, database connection, Redis settings, and proxy behavior
+
+`src/main/resources/application-local.properties` - local dev overrides, uses H2 in-memory database so you don't need PostgreSQL running locally
+
+`.env` - production secrets including database password, Redis password, and API keys. This file is never committed to Git. A `.env.example` is provided with all required keys and placeholder values.
+
+---
+
+## API Reference
+
+### Proxy
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET, POST, PUT, DELETE | `/proxy/**` | API Key | Forwards request to origin and caches response |
+
+### Cache
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/cache/health` | None | Health check |
+| GET | `/cache/stats` | API Key | Cache hit/miss statistics |
+| POST | `/cache/clear` | API Key | Clears all cached responses |
+
+### Admin
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/admin/keys` | API Key | List all API keys |
+| POST | `/admin/keys` | API Key | Create a new API key |
+| DELETE | `/admin/keys/{id}` | API Key | Revoke an API key |
+
+---
+
+## Security
+
+API keys are hashed with SHA-256 before storage. Per-IP rate limiting is enforced at 100 requests per minute via Bucket4j. SSRF protection blocks requests to internal network addresses.
+
+---
+
+## CI/CD
+
+GitHub Actions handles the full build-test-deploy pipeline on every push to main. Docker Compose manages the multi-container setup for both local development and production.
+
+---
+
+## Live Demo
+
+Backend is deployed on Render and publicly accessible.
+
+Base URL: `https://caching-proxy-975c.onrender.com`
+
+Use the health endpoint to verify the deployment is running:
 
 ```bash
-# First request — CACHE MISS (fetches from origin)
-curl http://localhost:8080/proxy/products/1?origin=http://dummyjson.com
-
-# Second request — CACHE HIT (instant!)
-curl http://localhost:8080/proxy/products/1?origin=http://dummyjson.com
-
-# Check response headers
-curl -I http://localhost:8080/proxy/products/1?origin=http://dummyjson.com
-# X-Cache: HIT
-# X-Proxy: CachingProxy/1.0
-# X-Response-Time: 0ms
-```
-
-### Cache Management
-
-```bash
-# View stats
-curl http://localhost:8080/cache/stats
-
-# Health check
-curl http://localhost:8080/cache/health
-
-# Clear all cache
-curl -X POST http://localhost:8080/cache/clear
-
-# Update origin
-curl -X PUT http://localhost:8080/cache/origin \
-  -H "Content-Type: application/json" \
-  -d '{"origin": "https://jsonplaceholder.typicode.com"}'
+curl https://caching-proxy-975c.onrender.com/cache/health
 ```
 
 ---
 
-## 📊 Dashboard Features
-
-| Tab | Features |
-|-----|----------|
-| **Dashboard** | Hit rate gauge, live stats cards, top endpoints chart, request log |
-| **Request Tester** | Send proxy requests, see HIT/MISS badges, view JSON responses |
-| **Settings** | Update origin URL, clear cache |
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROXY_ORIGIN` | `http://dummyjson.com` | Default target server |
-| `SERVER_PORT` | `8080` | Backend port |
-
-### Cache Settings (CacheConfig.java)
-
-```java
-.maximumSize(10_000)                    // Max cached items
-.expireAfterWrite(Duration.ofHours(1)) // Cache TTL
-.recordStats()                          // Enable metrics
-```
-
----
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Backend Framework | Spring Boot 3.2 |
-| Language | Java 17 |
-| Cache Engine | Caffeine (Google) |
-| HTTP Client | Spring WebFlux |
-| Monitoring | Spring Actuator + Micrometer |
-| Frontend | React 18 + Vite |
-| Containerization | Docker + Docker Compose |
-
----
-
-## 📈 Performance
-
-| Scenario | Response Time |
-|----------|--------------|
-| Cache HIT | < 1ms |
-| Cache MISS (local network) | 50–200ms |
-| Cache MISS (external API) | 200–800ms |
-
-**Result: 99%+ latency reduction on cache hits.**
+| Backend | Java 17, Spring Boot, Spring Security |
+| Cache | Redis |
+| Database | PostgreSQL (prod), H2 (local dev) |
+| Frontend | React, Vite |
+| Auth | SHA-256 hashed API keys, Bucket4j rate limiting |
+| DevOps | Docker, Docker Compose, GitHub Actions, Render |
